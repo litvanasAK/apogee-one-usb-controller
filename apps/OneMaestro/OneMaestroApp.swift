@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import CoreAudio
 import Foundation
 import SwiftUI
 
@@ -212,9 +213,22 @@ final class DeviceModel: ObservableObject {
     @Published var lastSeenUID = ""
 
     private var syncingFromDevice = false
+    private var busyCount = 0
+    private var outputVolumeApplyRunning = false
+    private var outputVolumeNeedsApply = false
+    private var inputGainApplyRunning = false
+    private var inputGainNeedsApply = false
+    private var monitorVolumeApplyRunning = false
+    private var monitorVolumeNeedsApply = false
+    private var observedCoreAudioOutputControlID: AudioObjectID?
+    private var coreAudioOutputVolumeListener: AudioObjectPropertyListenerBlock?
 
     var shouldIgnoreControlChanges: Bool {
         syncingFromDevice || busy
+    }
+
+    var shouldIgnoreSliderChanges: Bool {
+        syncingFromDevice
     }
 
     init() {
@@ -222,7 +236,10 @@ final class DeviceModel: ObservableObject {
     }
 
     var outputRange: ClosedRange<Double> {
-        range(from: status?.uac.mainOutput.volume, fallback: -64...0)
+        if let range = coreAudioOutputControl?.values.decibelRange {
+            return range.minimum...range.maximum
+        }
+        return range(from: status?.uac.mainOutput.volume, fallback: -64...0)
     }
 
     var inputGainRange: ClosedRange<Double> {
@@ -236,6 +253,16 @@ final class DeviceModel: ObservableObject {
         return values[0]...values[1]
     }
 
+    var coreAudioOutputControl: CoreAudioControl? {
+        status?.coreAudio.controls?.first {
+            $0.className == "volume" && $0.scopeName == "output"
+        }
+    }
+
+    var usesCoreAudioOutputVolume: Bool {
+        coreAudioOutputControl?.values.decibels != nil
+    }
+
     func refresh() async {
         await runAndReload(nil)
     }
@@ -245,12 +272,27 @@ final class DeviceModel: ObservableObject {
             if !busy {
                 await reloadStatus(showBusy: false)
             }
-            try? await Task.sleep(for: .seconds(4))
+            try? await Task.sleep(for: .seconds(2))
         }
     }
 
     func applyOutputVolume() async {
-        await runAndReload(["output", "--volume-db", dbArgument(outputVolumeDb)])
+        await runAndReload(outputVolumeCommand())
+    }
+
+    func scheduleOutputVolumeApply() {
+        outputVolumeNeedsApply = true
+        guard !outputVolumeApplyRunning else { return }
+        outputVolumeApplyRunning = true
+
+        Task { @MainActor in
+            while self.outputVolumeNeedsApply {
+                self.outputVolumeNeedsApply = false
+                await self.runCommand(self.outputVolumeCommand(), reload: false)
+                try? await Task.sleep(for: .milliseconds(40))
+            }
+            self.outputVolumeApplyRunning = false
+        }
     }
 
     func applyOutputMute() async {
@@ -267,12 +309,42 @@ final class DeviceModel: ObservableObject {
         await runAndReload(["input", "--gain-db", dbArgument(inputGainDb)])
     }
 
+    func scheduleInputGainApply() {
+        inputGainNeedsApply = true
+        guard !inputGainApplyRunning else { return }
+        inputGainApplyRunning = true
+
+        Task { @MainActor in
+            while self.inputGainNeedsApply {
+                self.inputGainNeedsApply = false
+                await self.runCommand(["input", "--gain-db", self.dbArgument(self.inputGainDb)], reload: false)
+                try? await Task.sleep(for: .milliseconds(40))
+            }
+            self.inputGainApplyRunning = false
+        }
+    }
+
     func dryRunMonitorVolume() async {
         await runCommand(["monitor", "--volume-db", dbArgument(monitorVolumeDb), "--dry-run"], reload: false)
     }
 
     func applyMonitorVolume() async {
         await runCommand(["monitor", "--volume-db", dbArgument(monitorVolumeDb)], reload: false)
+    }
+
+    func scheduleMonitorVolumeApply() {
+        monitorVolumeNeedsApply = true
+        guard !monitorVolumeApplyRunning else { return }
+        monitorVolumeApplyRunning = true
+
+        Task { @MainActor in
+            while self.monitorVolumeNeedsApply {
+                self.monitorVolumeNeedsApply = false
+                await self.runCommand(["monitor", "--volume-db", self.dbArgument(self.monitorVolumeDb)], reload: false)
+                try? await Task.sleep(for: .milliseconds(40))
+            }
+            self.monitorVolumeApplyRunning = false
+        }
     }
 
     func applyMonitorPreset(_ db: Double) async {
@@ -290,8 +362,8 @@ final class DeviceModel: ObservableObject {
 
     @discardableResult
     private func runCommand(_ command: [String], reload: Bool) async -> Bool {
-        busy = true
-        defer { busy = false }
+        beginBusy()
+        defer { endBusy() }
 
         do {
             let output = try await OneControlRunner.run(jsonCommand(command))
@@ -310,11 +382,11 @@ final class DeviceModel: ObservableObject {
 
     private func reloadStatus(showBusy: Bool = true) async {
         if showBusy {
-            busy = true
+            beginBusy()
         }
         defer {
             if showBusy {
-                busy = false
+                endBusy()
             }
         }
 
@@ -323,11 +395,14 @@ final class DeviceModel: ObservableObject {
             let decoded = try JSONDecoder().decode(StatusEnvelope.self, from: Data(output.utf8))
             syncingFromDevice = true
             status = decoded.device
-            outputVolumeDb = decoded.device.uac.mainOutput.volume.currentDb ?? outputVolumeDb
+            outputVolumeDb = coreAudioOutputControl?.values.decibels ??
+                decoded.device.uac.mainOutput.volume.currentDb ??
+                outputVolumeDb
             outputMuted = decoded.device.uac.mainOutput.mute ?? false
             inputSource = decoded.device.uac.input.currentSource?.cliName ?? inputSource
             inputGainDb = decoded.device.uac.input.currentGain?.currentDb ?? inputGainDb
             lastSeenUID = decoded.device.coreAudio.uid ?? lastSeenUID
+            updateCoreAudioOutputVolumeObserver()
             syncingFromDevice = false
             persistEditableState()
             message = "Ready"
@@ -339,6 +414,16 @@ final class DeviceModel: ObservableObject {
         }
     }
 
+    private func beginBusy() {
+        busyCount += 1
+        busy = true
+    }
+
+    private func endBusy() {
+        busyCount = max(0, busyCount - 1)
+        busy = busyCount > 0
+    }
+
     private func range(from volume: VolumeStatus?, fallback: ClosedRange<Double>) -> ClosedRange<Double> {
         guard let min = volume?.minimumDb, let max = volume?.maximumDb else {
             return fallback
@@ -348,6 +433,82 @@ final class DeviceModel: ObservableObject {
 
     private func dbArgument(_ value: Double) -> String {
         String(format: "%.0f", value)
+    }
+
+    private func outputVolumeCommand() -> [String] {
+        if usesCoreAudioOutputVolume {
+            return ["output", "--macos-volume-db", dbArgument(outputVolumeDb)]
+        }
+        return ["output", "--volume-db", dbArgument(outputVolumeDb)]
+    }
+
+    private func updateCoreAudioOutputVolumeObserver() {
+        guard let controlID = coreAudioOutputControl.map({ AudioObjectID($0.id) }),
+              observedCoreAudioOutputControlID != controlID else {
+            return
+        }
+
+        if let observed = observedCoreAudioOutputControlID,
+           let listener = coreAudioOutputVolumeListener {
+            var oldDbAddress = AudioObjectPropertyAddress(mSelector: kAudioLevelControlPropertyDecibelValue,
+                                                          mScope: kAudioObjectPropertyScopeGlobal,
+                                                          mElement: kAudioObjectPropertyElementMain)
+            var oldScalarAddress = AudioObjectPropertyAddress(mSelector: kAudioLevelControlPropertyScalarValue,
+                                                              mScope: kAudioObjectPropertyScopeGlobal,
+                                                              mElement: kAudioObjectPropertyElementMain)
+            AudioObjectRemovePropertyListenerBlock(observed, &oldDbAddress, .main, listener)
+            AudioObjectRemovePropertyListenerBlock(observed, &oldScalarAddress, .main, listener)
+        }
+
+        observedCoreAudioOutputControlID = controlID
+        var dbAddress = AudioObjectPropertyAddress(mSelector: kAudioLevelControlPropertyDecibelValue,
+                                                   mScope: kAudioObjectPropertyScopeGlobal,
+                                                   mElement: kAudioObjectPropertyElementMain)
+        var scalarAddress = AudioObjectPropertyAddress(mSelector: kAudioLevelControlPropertyScalarValue,
+                                                       mScope: kAudioObjectPropertyScopeGlobal,
+                                                       mElement: kAudioObjectPropertyElementMain)
+        let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            Task { @MainActor in
+                self?.refreshCoreAudioOutputVolumeFromObserver()
+            }
+        }
+
+        let dbStatus = AudioObjectAddPropertyListenerBlock(controlID, &dbAddress, .main, listener)
+        let scalarStatus = AudioObjectAddPropertyListenerBlock(controlID, &scalarAddress, .main, listener)
+        if dbStatus == noErr || scalarStatus == noErr {
+            coreAudioOutputVolumeListener = listener
+        } else {
+            observedCoreAudioOutputControlID = nil
+            coreAudioOutputVolumeListener = nil
+        }
+    }
+
+    private func refreshCoreAudioOutputVolumeFromObserver() {
+        guard let controlID = observedCoreAudioOutputControlID,
+              let db = readCoreAudioOutputVolumeDb(controlID: controlID) else {
+            return
+        }
+        syncingFromDevice = true
+        outputVolumeDb = db
+        syncingFromDevice = false
+        persistEditableState()
+    }
+
+    private func readCoreAudioOutputVolumeDb(controlID: AudioObjectID) -> Double? {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioLevelControlPropertyDecibelValue,
+                                                 mScope: kAudioObjectPropertyScopeGlobal,
+                                                 mElement: kAudioObjectPropertyElementMain)
+        guard AudioObjectHasProperty(controlID, &address) else {
+            return nil
+        }
+
+        var value = Float32(0)
+        var size = UInt32(MemoryLayout<Float32>.size)
+        let status = AudioObjectGetPropertyData(controlID, &address, 0, nil, &size, &value)
+        guard status == noErr, size == UInt32(MemoryLayout<Float32>.size) else {
+            return nil
+        }
+        return Double(value)
     }
 
     private func jsonCommand(_ command: [String]) -> [String] {
@@ -395,8 +556,8 @@ struct ContentView: View {
     private let monitorPresets: [(label: String, value: Double)] = [
         ("Silent", -63),
         ("Quiet", -54),
-        ("Checked", -48),
-        ("Loud", -36),
+        ("Medium", -36),
+        ("Loud", -18),
     ]
 
     var body: some View {
@@ -442,15 +603,13 @@ struct ContentView: View {
             sectionTitle("Output")
             HStack(spacing: 12) {
                 Slider(value: $model.outputVolumeDb, in: model.outputRange, step: 1)
+                    .onChange(of: model.outputVolumeDb) {
+                        guard !model.shouldIgnoreSliderChanges else { return }
+                        model.scheduleOutputVolumeApply()
+                    }
                 Text(dbText(model.outputVolumeDb))
                     .monospacedDigit()
                     .frame(width: 72, alignment: .trailing)
-                Button {
-                    Task { await model.applyOutputVolume() }
-                } label: {
-                    Label("Set", systemImage: "checkmark")
-                }
-                .disabled(model.busy)
             }
             Toggle("Mute", isOn: $model.outputMuted)
                 .onChange(of: model.outputMuted) {
@@ -487,15 +646,13 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
             HStack(spacing: 12) {
                 Slider(value: $model.inputGainDb, in: model.inputGainRange, step: 1)
+                    .onChange(of: model.inputGainDb) {
+                        guard !model.shouldIgnoreSliderChanges else { return }
+                        model.scheduleInputGainApply()
+                    }
                 Text(dbText(model.inputGainDb))
                     .monospacedDigit()
                     .frame(width: 72, alignment: .trailing)
-                Button {
-                    Task { await model.applyInputGain() }
-                } label: {
-                    Label("Set", systemImage: "checkmark")
-                }
-                .disabled(model.busy)
             }
         }
     }
@@ -505,6 +662,11 @@ struct ContentView: View {
             sectionTitle("Monitor")
             HStack(spacing: 12) {
                 Slider(value: $model.monitorVolumeDb, in: model.monitorRange, step: 1)
+                    .onChange(of: model.monitorVolumeDb) {
+                        guard !model.shouldIgnoreSliderChanges else { return }
+                        model.scheduleMonitorVolumeApply()
+                    }
+                    .disabled(!(model.status?.monitor.directInputMixWrite.enabled ?? false))
                 Text(dbText(model.monitorVolumeDb))
                     .monospacedDigit()
                     .frame(width: 72, alignment: .trailing)
@@ -514,12 +676,6 @@ struct ContentView: View {
                     Label("Dry Run", systemImage: "doc.text.magnifyingglass")
                 }
                 .disabled(model.busy)
-                Button {
-                    Task { await model.applyMonitorVolume() }
-                } label: {
-                    Label("Apply", systemImage: "slider.horizontal.3")
-                }
-                .disabled(model.busy || !(model.status?.monitor.directInputMixWrite.enabled ?? false))
             }
             HStack(spacing: 8) {
                 ForEach(monitorPresets, id: \.label) { preset in

@@ -41,7 +41,7 @@ $(APP_DIR)/Contents/MacOS/OneMaestro: apps/OneMaestro/OneMaestroApp.swift apps/O
 	mkdir -p $(APP_DIR)/Contents/MacOS $(APP_DIR)/Contents/Resources
 	cp apps/OneMaestro/Info.plist $(APP_DIR)/Contents/Info.plist
 	cp $(BUILD_DIR)/one-control $(APP_DIR)/Contents/Resources/one-control
-	swiftc $(SWIFTFLAGS) -framework SwiftUI -framework AppKit $< -o $@
+	swiftc $(SWIFTFLAGS) -framework SwiftUI -framework AppKit -framework CoreAudio $< -o $@
 
 clean:
 	rm -rf $(BUILD_DIR)

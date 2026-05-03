@@ -17,6 +17,9 @@ Expected results:
 - `.build/OneMaestro.app` exists.
 - `.build/OneMaestro.zip` exists.
 
+Last checked on May 4, 2026: `make package` completed and refreshed
+`.build/OneMaestro.zip`.
+
 ## Device Status
 
 ```sh
@@ -45,6 +48,10 @@ Expected result:
 
 - Every line reports `ok`.
 - Final line is `self-test: passed`.
+
+Last checked on May 4, 2026: self-test passed with main output at `-20 dB`,
+input selector `3`, and input gains `17`, `33`, `33`, and `0 dB` for features
+`5`, `11`, `13`, and `9`.
 
 ## Input Controls
 

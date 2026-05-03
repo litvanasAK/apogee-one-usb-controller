@@ -185,7 +185,8 @@ static void print_nserror(const char *context, NSError *error) {
 static void print_usage(void) {
     puts("Usage:");
     puts("  one-control status [--json]");
-    puts("  one-control output [--json] [--volume-db <db>] [--mute on|off] [--headphone-mute on|off]");
+    puts("  one-control output [--json] [--volume-db <db>|--macos-volume-db <db>]");
+    puts("                     [--mute on|off] [--headphone-mute on|off]");
     puts("  one-control input [--json] [--source <int-mic|ext-mic|ext-48v-mic|inst>]");
     puts("                    [--source-pin <1..4>|--source-unit <5|9|11|13>] [--gain-db <db>]");
     puts("  one-control monitor [--json] [--dry-run] [--volume-db <db>|--attenuation-db <db>]");
@@ -733,6 +734,23 @@ static bool coreaudio_get(AudioObjectID object_id,
            AudioObjectGetPropertyData(object_id, &address, 0, NULL, size, data) == noErr;
 }
 
+static bool coreaudio_set(AudioObjectID object_id,
+                          AudioObjectPropertySelector selector,
+                          AudioObjectPropertyScope scope,
+                          const void *data,
+                          UInt32 size) {
+    AudioObjectPropertyAddress address = {
+        .mSelector = selector,
+        .mScope = scope,
+        .mElement = kAudioObjectPropertyElementMain,
+    };
+    Boolean settable = false;
+    return AudioObjectHasProperty(object_id, &address) &&
+           AudioObjectIsPropertySettable(object_id, &address, &settable) == noErr &&
+           settable &&
+           AudioObjectSetPropertyData(object_id, &address, 0, NULL, size, data) == noErr;
+}
+
 static bool coreaudio_get_qualified(AudioObjectID object_id,
                                     AudioObjectPropertySelector selector,
                                     AudioObjectPropertyScope scope,
@@ -974,6 +992,91 @@ static bool coreaudio_get_range(AudioObjectID object_id,
                                 AudioValueRange *range) {
     UInt32 size = sizeof(*range);
     return coreaudio_get(object_id, selector, scope, range, &size) && size == sizeof(*range);
+}
+
+static bool coreaudio_set_float32(AudioObjectID object_id,
+                                  AudioObjectPropertySelector selector,
+                                  AudioObjectPropertyScope scope,
+                                  Float32 value) {
+    return coreaudio_set(object_id, selector, scope, &value, sizeof(value));
+}
+
+static AudioObjectID coreaudio_find_control(AudioObjectID device_id,
+                                            UInt32 class_id,
+                                            UInt32 control_scope) {
+    UInt32 size = coreaudio_property_size(device_id,
+                                          kAudioObjectPropertyControlList,
+                                          kAudioObjectPropertyScopeGlobal);
+    if (size == 0 || size % sizeof(AudioObjectID) != 0) {
+        return kAudioObjectUnknown;
+    }
+
+    AudioObjectID *controls = calloc(1, size);
+    if (!controls) {
+        return kAudioObjectUnknown;
+    }
+
+    AudioObjectID found = kAudioObjectUnknown;
+    UInt32 read_size = size;
+    if (coreaudio_get(device_id,
+                      kAudioObjectPropertyControlList,
+                      kAudioObjectPropertyScopeGlobal,
+                      controls,
+                      &read_size)) {
+        UInt32 count = read_size / sizeof(AudioObjectID);
+        for (UInt32 i = 0; i < count; i++) {
+            UInt32 candidate_class = 0;
+            UInt32 candidate_scope = 0;
+            coreaudio_get_uint32(controls[i], kAudioObjectPropertyClass, kAudioObjectPropertyScopeGlobal, &candidate_class);
+            coreaudio_get_uint32(controls[i], kAudioControlPropertyScope, kAudioObjectPropertyScopeGlobal, &candidate_scope);
+            if (candidate_class == class_id && candidate_scope == control_scope) {
+                found = controls[i];
+                break;
+            }
+        }
+    }
+
+    free(controls);
+    return found;
+}
+
+static bool set_coreaudio_output_volume_db(double db) {
+    AudioObjectID one = find_coreaudio_one();
+    if (one == kAudioObjectUnknown) {
+        fputs("Cannot set macOS output volume: Core Audio ONE device is unavailable.\n", stderr);
+        return false;
+    }
+
+    AudioObjectID control = coreaudio_find_control(one, kAudioVolumeControlClassID, kAudioObjectPropertyScopeOutput);
+    if (control == kAudioObjectUnknown) {
+        fputs("Cannot set macOS output volume: Core Audio output volume control is unavailable.\n", stderr);
+        return false;
+    }
+
+    AudioValueRange range = {0, 0};
+    if (coreaudio_get_range(control,
+                            kAudioLevelControlPropertyDecibelRange,
+                            kAudioObjectPropertyScopeGlobal,
+                            &range) &&
+        (db < range.mMinimum || db > range.mMaximum)) {
+        fprintf(stderr,
+                "macOS output volume %.2f dB is outside range %.2f..%.2f dB.\n",
+                db,
+                range.mMinimum,
+                range.mMaximum);
+        return false;
+    }
+
+    Float32 value = (Float32)db;
+    if (!coreaudio_set_float32(control,
+                               kAudioLevelControlPropertyDecibelValue,
+                               kAudioObjectPropertyScopeGlobal,
+                               value)) {
+        fputs("Cannot set macOS output volume: Core Audio rejected the write.\n", stderr);
+        return false;
+    }
+
+    return true;
 }
 
 static void print_coreaudio_control_values(AudioObjectID control_id) {
@@ -1826,6 +1929,16 @@ static int command_output(IOUSBHostDevice *device, int argc, const char *argv[])
                 return 1;
             }
             changed = true;
+        } else if (strcmp(argv[i], "--macos-volume-db") == 0 && i + 1 < argc) {
+            double db = 0;
+            if (!parse_double_arg(argv[++i], &db)) {
+                fprintf(stderr, "Invalid --macos-volume-db value: %s\n", argv[i]);
+                return 64;
+            }
+            if (!set_coreaudio_output_volume_db(db)) {
+                return 1;
+            }
+            changed = true;
         } else if (strcmp(argv[i], "--mute") == 0 && i + 1 < argc) {
             uint8_t mute = 0;
             if (!parse_on_off(argv[++i], &mute)) {
@@ -1858,6 +1971,7 @@ static int command_output(IOUSBHostDevice *device, int argc, const char *argv[])
                                                           false,
                                                           changed ? @"Output updated" : @"Output status");
         [result setObject:json_output_status(device) forKey:@"output"];
+        [result setObject:json_coreaudio_status() forKey:@"coreAudio"];
         return print_json_object(result);
     }
 

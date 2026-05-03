@@ -200,6 +200,12 @@ Verified write behavior:
 - Structured helper result checks passed for `output --json`, `input --json`,
   `monitor --json --volume-db -48 --dry-run`, and a no-op
   `output --json --volume-db -20`.
+- May 4, 2026 verification: `make package` completed, `self-test` passed, and
+  `status --json`, `output --json`, `input --json`, and
+  `monitor --json --volume-db -48 --dry-run` returned valid JSON on the
+  connected ONE. The current source was `Ext 48V Mic`, current input gain was
+  `33 dB`, direct UAC main output was `-20 dB`, and Core Audio output volume
+  was `-26 dB`.
 
 One behavior to track: direct UAC reads and Core Audio control reads can disagree
 for output volume. Current JSON exposes both values; recent live reads showed
