@@ -242,7 +242,9 @@ final class DeviceModel: ObservableObject {
 
     func pollStatus() async {
         while !Task.isCancelled {
-            await reloadStatus(showBusy: false)
+            if !busy {
+                await reloadStatus(showBusy: false)
+            }
             try? await Task.sleep(for: .seconds(4))
         }
     }

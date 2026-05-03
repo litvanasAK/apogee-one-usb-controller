@@ -166,6 +166,8 @@ absent, and `ONEDaemon` is not accepting Maestro private-property traffic.
   and `-36 dB` for repeatable curve checks while the final taper is calibrated.
 - The app polls status every four seconds and shows a disconnected state when
   the bundled helper cannot read the device.
+- Polling skips refreshes while a user command is running so write-result
+  messages and serialized helper access are not disturbed by background reloads.
 - The app serializes all bundled helper invocations so polling and user writes
   do not collide with the ONE's exclusive `IOUSBHost` user client.
 - The app includes a compact diagnostics disclosure with USB IDs, Core Audio
