@@ -256,7 +256,9 @@ final class DeviceModel: ObservableObject {
     }
 
     func applyInputSource() async {
-        await runAndReload(["input", "--source", inputSource])
+        if await runCommand(["input", "--source", inputSource], reload: true) {
+            await runCommand(["monitor", "--volume-db", dbArgument(monitorVolumeDb)], reload: false)
+        }
     }
 
     func applyInputGain() async {
@@ -279,7 +281,8 @@ final class DeviceModel: ObservableObject {
         }
     }
 
-    private func runCommand(_ command: [String], reload: Bool) async {
+    @discardableResult
+    private func runCommand(_ command: [String], reload: Bool) async -> Bool {
         busy = true
         defer { busy = false }
 
@@ -291,8 +294,10 @@ final class DeviceModel: ObservableObject {
             if reload {
                 await reloadStatus(showBusy: false)
             }
+            return true
         } catch {
             message = error.localizedDescription
+            return false
         }
     }
 

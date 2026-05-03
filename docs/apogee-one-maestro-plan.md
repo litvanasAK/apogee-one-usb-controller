@@ -160,6 +160,8 @@ absent, and `ONEDaemon` is not accepting Maestro private-property traffic.
   `status --json`, `output --json`, `input --json`, and `monitor --json`.
 - App-side persistence stores monitor volume, input source/gain, output
   mute/level, and last seen Core Audio UID in `UserDefaults`.
+- When the app changes input source, it reapplies the current monitor volume so
+  the source-dependent direct-input mix send follows the selected source.
 - The app polls status every four seconds and shows a disconnected state when
   the bundled helper cannot read the device.
 - The app serializes all bundled helper invocations so polling and user writes
