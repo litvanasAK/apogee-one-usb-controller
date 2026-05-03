@@ -24,12 +24,37 @@ struct CoreAudioStatus: Decodable {
     let inputChannels: Int?
     let outputChannels: Int?
     let defaultRoles: DefaultRoles?
+    let controls: [CoreAudioControl]?
 }
 
 struct DefaultRoles: Decodable {
     let input: Bool
     let output: Bool
     let systemOutput: Bool
+}
+
+struct CoreAudioControl: Decodable, Identifiable {
+    let id: Int
+    let classFourCC: String
+    let className: String
+    let scopeFourCC: String
+    let scopeName: String
+    let element: Int
+    let name: String?
+    let values: CoreAudioControlValues
+}
+
+struct CoreAudioControlValues: Decodable {
+    let scalar: Double?
+    let decibels: Double?
+    let decibelRange: CoreAudioDecibelRange?
+    let boolean: Bool?
+    let currentItem: Int?
+}
+
+struct CoreAudioDecibelRange: Decodable {
+    let minimum: Double
+    let maximum: Double
 }
 
 struct UACStatus: Decodable {
@@ -62,6 +87,10 @@ struct InputSourceStatus: Decodable, Identifiable, Hashable {
     let name: String
     let cliName: String
     let descriptorHint: String
+    let phantomPower: Bool?
+    let hiZ: Bool?
+    let microphone: Bool?
+    let externalInput: Bool?
 
     var id: String { cliName }
 }
@@ -414,6 +443,9 @@ struct ContentView: View {
                 }
                 .disabled(model.busy)
             }
+            Text(inputModeLine)
+                .font(.caption)
+                .foregroundStyle(.secondary)
             HStack(spacing: 12) {
                 Slider(value: $model.inputGainDb, in: model.inputGainRange, step: 1)
                 Text(dbText(model.inputGainDb))
@@ -519,7 +551,9 @@ struct ContentView: View {
         guard let status = model.status else {
             return "unavailable"
         }
-        return "feature \(status.uac.mainOutput.featureUnit), headphone feature \(status.uac.headphone.featureUnit)"
+        let uacDb = status.uac.mainOutput.volume.currentDb.map { dbText($0) } ?? "unavailable"
+        let coreDb = coreAudioOutputVolume.map { dbText($0) } ?? "unavailable"
+        return "UAC feature \(status.uac.mainOutput.featureUnit) \(uacDb), Core Audio output \(coreDb), headphone feature \(status.uac.headphone.featureUnit)"
     }
 
     private var inputDiagnosticLine: String {
@@ -528,6 +562,22 @@ struct ContentView: View {
         }
         let current = input.currentSource.map { "\($0.cliName) pin \($0.pin) feature \($0.featureUnit)" } ?? "unknown"
         return "selector \(input.selectorUnit), current \(current)"
+    }
+
+    private var inputModeLine: String {
+        guard let source = model.status?.uac.input.currentSource else {
+            return "Input mode unavailable"
+        }
+        if source.phantomPower == true {
+            return "48V external microphone mode"
+        }
+        if source.hiZ == true {
+            return "Hi-Z instrument mode"
+        }
+        if source.externalInput == true {
+            return "External microphone mode"
+        }
+        return "Internal microphone mode"
     }
 
     private var monitorDiagnosticLine: String {
@@ -543,6 +593,12 @@ struct ContentView: View {
         }
         let audible = legacy.audibleEffectConfirmed == true ? "audible" : "not audible"
         return "request 0x\(String(legacy.bRequest ?? 0, radix: 16)), enabled \(legacy.enabled ? "yes" : "no"), \(audible)"
+    }
+
+    private var coreAudioOutputVolume: Double? {
+        model.status?.coreAudio.controls?.first {
+            $0.className == "volume" && $0.scopeName == "output"
+        }?.values.decibels
     }
 
     private func diagnosticRow(_ label: String, _ value: String) -> some View {

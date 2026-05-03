@@ -1411,12 +1411,18 @@ static NSDictionary *json_input_source(const InputSource *source) {
     if (!source) {
         return @{};
     }
+    bool is_external_mic = source->pin == 2 || source->pin == 3;
+    bool is_instrument = source->pin == 4;
     return @{
         @"pin": @(source->pin),
         @"featureUnit": @(source->feature_unit),
         @"name": @(source->name),
         @"cliName": @(source->cli_name),
         @"descriptorHint": @(source->descriptor_hint),
+        @"phantomPower": json_bool(source->pin == 3),
+        @"hiZ": json_bool(is_instrument),
+        @"microphone": json_bool(!is_instrument),
+        @"externalInput": json_bool(is_external_mic || is_instrument),
     };
 }
 
@@ -1426,6 +1432,135 @@ static NSArray *json_input_sources(void) {
         [sources addObject:json_input_source(&kInputSources[i])];
     }
     return sources;
+}
+
+static NSMutableDictionary *json_coreaudio_control_values(AudioObjectID control_id) {
+    NSMutableDictionary *values = [NSMutableDictionary dictionary];
+    Float32 scalar = 0;
+    Float32 db = 0;
+    AudioValueRange db_range = {0, 0};
+    UInt32 boolean = 0;
+    UInt32 selector = 0;
+
+    if (coreaudio_get_float32(control_id,
+                              kAudioLevelControlPropertyScalarValue,
+                              kAudioObjectPropertyScopeGlobal,
+                              &scalar)) {
+        [values setObject:@(scalar) forKey:@"scalar"];
+    }
+    if (coreaudio_get_float32(control_id,
+                              kAudioLevelControlPropertyDecibelValue,
+                              kAudioObjectPropertyScopeGlobal,
+                              &db)) {
+        [values setObject:@(db) forKey:@"decibels"];
+    }
+    if (coreaudio_get_range(control_id,
+                            kAudioLevelControlPropertyDecibelRange,
+                            kAudioObjectPropertyScopeGlobal,
+                            &db_range)) {
+        [values setObject:@{
+            @"minimum": @(db_range.mMinimum),
+            @"maximum": @(db_range.mMaximum),
+        } forKey:@"decibelRange"];
+    }
+    if (coreaudio_get_uint32(control_id,
+                             kAudioBooleanControlPropertyValue,
+                             kAudioObjectPropertyScopeGlobal,
+                             &boolean)) {
+        [values setObject:json_bool(boolean != 0) forKey:@"boolean"];
+    }
+    if (coreaudio_get_uint32(control_id,
+                             kAudioSelectorControlPropertyCurrentItem,
+                             kAudioObjectPropertyScopeGlobal,
+                             &selector)) {
+        [values setObject:@(selector) forKey:@"currentItem"];
+    }
+
+    UInt32 available_size = coreaudio_property_size(control_id,
+                                                   kAudioSelectorControlPropertyAvailableItems,
+                                                   kAudioObjectPropertyScopeGlobal);
+    if (available_size > 0 && available_size % sizeof(UInt32) == 0) {
+        UInt32 *items = calloc(1, available_size);
+        if (items) {
+            UInt32 size = available_size;
+            if (coreaudio_get(control_id,
+                              kAudioSelectorControlPropertyAvailableItems,
+                              kAudioObjectPropertyScopeGlobal,
+                              items,
+                              &size)) {
+                NSMutableArray *json_items = [NSMutableArray array];
+                UInt32 count = size / sizeof(UInt32);
+                for (UInt32 i = 0; i < count; i++) {
+                    NSMutableDictionary *item = [@{@"id": @(items[i])} mutableCopy];
+                    CFStringRef item_name = coreaudio_copy_selector_item_name(control_id, items[i]);
+                    UInt32 item_kind = 0;
+                    if (item_name) {
+                        [item setObject:json_value_for_cfstring(item_name) forKey:@"name"];
+                    }
+                    if (coreaudio_get_selector_item_kind(control_id, items[i], &item_kind)) {
+                        char kind_fourcc[5];
+                        [item setObject:[NSString stringWithUTF8String:fourcc_string(item_kind, kind_fourcc)]
+                                  forKey:@"kindFourCC"];
+                    }
+                    [json_items addObject:item];
+                }
+                [values setObject:json_items forKey:@"items"];
+            }
+            free(items);
+        }
+    }
+
+    return values;
+}
+
+static NSArray *json_coreaudio_controls(AudioObjectID device_id) {
+    UInt32 size = coreaudio_property_size(device_id,
+                                          kAudioObjectPropertyControlList,
+                                          kAudioObjectPropertyScopeGlobal);
+    if (size == 0 || size % sizeof(AudioObjectID) != 0) {
+        return @[];
+    }
+
+    AudioObjectID *controls = calloc(1, size);
+    if (!controls) {
+        return @[];
+    }
+
+    NSMutableArray *json_controls = [NSMutableArray array];
+    UInt32 read_size = size;
+    if (coreaudio_get(device_id,
+                      kAudioObjectPropertyControlList,
+                      kAudioObjectPropertyScopeGlobal,
+                      controls,
+                      &read_size)) {
+        UInt32 count = read_size / sizeof(AudioObjectID);
+        for (UInt32 i = 0; i < count; i++) {
+            UInt32 class_id = 0;
+            UInt32 scope = 0;
+            UInt32 element = 0;
+            char class_fourcc[5];
+            char scope_fourcc[5];
+            CFStringRef name = coreaudio_copy_string(controls[i], kAudioObjectPropertyName);
+
+            coreaudio_get_uint32(controls[i], kAudioObjectPropertyClass, kAudioObjectPropertyScopeGlobal, &class_id);
+            coreaudio_get_uint32(controls[i], kAudioControlPropertyScope, kAudioObjectPropertyScopeGlobal, &scope);
+            coreaudio_get_uint32(controls[i], kAudioControlPropertyElement, kAudioObjectPropertyScopeGlobal, &element);
+
+            [json_controls addObject:@{
+                @"id": @(controls[i]),
+                @"classFourCC": [NSString stringWithUTF8String:fourcc_string(class_id, class_fourcc)],
+                @"className": [NSString stringWithUTF8String:coreaudio_class_name(class_id)],
+                @"scopeFourCC": [NSString stringWithUTF8String:fourcc_string(scope, scope_fourcc)],
+                @"scopeName": [NSString stringWithUTF8String:coreaudio_scope_name(scope)],
+                @"element": @(element),
+                @"name": json_value_for_cfstring(name),
+                @"values": json_coreaudio_control_values(controls[i]),
+            }];
+        }
+    }
+
+    free(controls);
+    return json_controls;
 }
 
 static NSDictionary *json_coreaudio_status(void) {
@@ -1473,9 +1608,10 @@ static NSDictionary *json_coreaudio_status(void) {
                                                    kAudioDevicePropertyPlayThruVolumeDecibels,
                                                    kAudioDevicePropertyScopeInput)),
         @"output": json_bool(coreaudio_has_property(one,
-                                                    kAudioDevicePropertyPlayThruVolumeDecibels,
-                                                    kAudioDevicePropertyScopeOutput)),
+                                            kAudioDevicePropertyPlayThruVolumeDecibels,
+                                            kAudioDevicePropertyScopeOutput)),
     } forKey:@"playThroughVolumeDecibels"];
+    [dict setObject:json_coreaudio_controls(one) forKey:@"controls"];
     return dict;
 }
 

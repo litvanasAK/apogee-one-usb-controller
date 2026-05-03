@@ -58,6 +58,11 @@ queries on the live ONE map those pins to Maestro labels:
 - pin `3`, feature `13`: `Ext 48V Mic`
 - pin `4`, feature `9`: `Inst`
 
+For the product UI, phantom power and Hi-Z are currently represented as source
+mode semantics: `Ext 48V Mic` means 48V external microphone mode, and `Inst`
+means Hi-Z instrument mode. They are not exposed as independent toggles until a
+separate hardware control is verified.
+
 Monitoring volume is a v1 target. The standard UAC descriptor dump shows output
 volume and input gain controls; it does not name a monitor volume control
 directly. The installed Apogee plug-in includes Maestro monitor/mixer concepts
@@ -105,7 +110,9 @@ absent, and `ONEDaemon` is not accepting Maestro private-property traffic.
 - `.build/one-control status`: read-only Core Audio and UAC status.
 - `.build/one-control status --json`: parseable app-facing status with Core
   Audio role, UAC control values/ranges, input-source mapping, and monitor
-  request metadata.
+  request metadata. It also includes the Core Audio control list so UAC and
+  Core Audio volume/mute state can be compared.
+  Input source metadata marks 48V and Hi-Z source modes.
 - `.build/one-control output`: read-only output status.
 - `.build/one-control output --volume-db <db>`: guarded UAC `SET_CUR` for main
   output level.
@@ -151,6 +158,8 @@ absent, and `ONEDaemon` is not accepting Maestro private-property traffic.
   do not collide with the ONE's exclusive `IOUSBHost` user client.
 - The app includes a compact diagnostics disclosure with USB IDs, Core Audio
   UID/roles, UAC entity IDs, monitor request status, and legacy request status.
+- Diagnostics show both direct UAC main output volume and Core Audio output
+  volume so the known output discrepancy is visible instead of hidden.
 - `make package` ad-hoc signs the app bundle and creates `.build/OneMaestro.zip`.
 - [Operator Test Checklist](operator-test-checklist.md) captures the live smoke
   test sequence.
@@ -174,8 +183,8 @@ Verified write behavior:
   `one-control status --json` reads the connected ONE outside the sandbox.
 
 One behavior to track: direct UAC reads and Core Audio control reads can disagree
-for output volume. After the no-op write test, direct UAC reported main output
-volume as `-20 dB`, while Core Audio's output volume control reported `-39 dB`.
+for output volume. Current JSON exposes both values; recent live reads showed
+direct UAC main output at `-20 dB` and Core Audio output volume at `-26 dB`.
 Treat those as separate observed values until we confirm which one corresponds
 to Maestro's Main Out level versus macOS output volume.
 
@@ -218,9 +227,9 @@ to Maestro's Main Out level versus macOS output volume.
 - The `0x06` low-latency monitor attenuation request is accepted but did not
   change audible monitoring in live tests. Keep it as a legacy diagnostic, not
   as the product-facing monitoring volume control.
-- Phantom power and Hi-Z/instrument mode still rely on input source selection
-  behavior. They need explicit UI wording and live verification before being
-  presented as independent controls.
+- Phantom power and Hi-Z/instrument mode are represented as input source modes.
+  They should not be presented as independent controls unless a separate
+  hardware control is verified.
 - The current SwiftUI app shells out to the CLI. That is acceptable for a local
   prototype, but the product should move shared control logic into a reusable
   library or XPC/helper boundary.
@@ -241,6 +250,8 @@ Turn the working prototype into a usable local product:
 3. Calibrate the monitor volume curve with more listening points than `0`,
    `48`, and `63`.
 4. Resolve the direct UAC output volume versus Core Audio output volume
-   discrepancy.
-5. Decide whether phantom power and Hi-Z should remain source modes or be
-   surfaced as separate controls.
+   discrepancy. It is now observable in JSON/app diagnostics but not yet
+   semantically resolved.
+5. Decide whether additional reverse engineering is needed for independent
+   phantom power or Hi-Z controls. Current product behavior treats them as
+   source modes.
