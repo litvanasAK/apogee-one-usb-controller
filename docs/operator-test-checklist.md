@@ -75,16 +75,16 @@ mic source:
 ```sh
 .build/one-control monitor --volume-db -63
 .build/one-control monitor --volume-db -54
-.build/one-control monitor --volume-db -48
 .build/one-control monitor --volume-db -36
+.build/one-control monitor --volume-db -18
 .build/one-control monitor --volume-db 0
 ```
 
 Expected results:
 
 - `-63 dB` is silent or near-silent.
-- `-54 dB`, `-48 dB`, and `-36 dB` increase in audible level.
-- `-48 dB` is quiet-audible.
+- `-54 dB`, `-36 dB`, and `-18 dB` increase in audible level.
+- `-54 dB` is quiet-audible.
 - `0 dB` is loud.
 - Recording remains unaffected.
 

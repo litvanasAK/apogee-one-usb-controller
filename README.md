@@ -1,56 +1,74 @@
-# Apogee ONE Exploration
+# OneMaestro
 
-This repository is currently a feasibility workspace for replacing the legacy
-Apogee Maestro control path for the original Apogee ONE USB interface on modern
-macOS.
+A small macOS utility for controlling the original Apogee ONE USB interface on
+modern macOS, without relying on the legacy Apogee Maestro app.
 
-Current observed device:
+The app keeps Core Audio in charge of audio streaming and talks to the device
+only for Maestro-style hardware controls: output level/mute, input source,
+input gain, and direct monitoring volume.
 
-- USB vendor: Apogee (`0x0c60`)
-- USB product: ONE (`0x0003`)
-- Local macOS: Tahoe 26.3.1
-- USB Audio Class: UAC1, full-speed USB, 24-bit PCM at 44.1/48 kHz
-- Streams advertised by descriptors: 2-channel output, 1-channel input
+![OneMaestro main window](docs/assets/onemaestro-main.png)
 
-Current status:
+## Status
 
-- The USB device and its audio interfaces enumerate under `IOUSBHost`.
-- Core Audio exposes `ONE` as an Apogee USB audio device. On this Mac, an
-  outside-sandbox Core Audio probe sees it as the default output/system output
-  with 1 input channel and 2 output channels.
-- The device accepts read-only USB Audio Class control requests from user space.
-- This gives us a practical path for a Maestro-style control app that controls
-  hardware state while Core Audio continues to handle audio streaming.
-- In the Codex sandbox, `system_profiler SPAudioDataType` and Core Audio device
-  enumeration can report an empty device list. Use the Core Audio probe outside
-  the sandbox for authoritative local device state.
+This is a working local prototype for the original Apogee ONE USB
+(`0x0c60:0x0003`). It has been tested against one connected unit on macOS Tahoe
+26.3.1.
 
-Initial feature targets:
+Implemented:
 
 - Main output level and mute
-- Input source and input gain, with source names mapped to `int-mic`,
-  `ext-mic`, `ext-48v-mic`, and `inst`
-- Direct monitoring volume through the confirmed direct-input monitor mix send
-- Phantom power and Hi-Z/instrument mode after their exact control mapping is
-  confirmed
+- Input source selection: `Int Mic`, `Ext Mic`, `Ext 48V Mic`, and `Inst`
+- Input gain for the selected source
+- Direct monitor volume through the confirmed direct-input monitor mix send
+- Core Audio output-volume tracking, so the app follows macOS volume changes
+- A compact diagnostics panel for USB, Core Audio, UAC, and monitor request state
 
-Useful command:
+Known limits:
+
+- This is not an App Store-sandboxed app.
+- The CLI opens the ONE through `IOUSBHost`; run one helper command at a time.
+- Direct monitor volume has no hardware readback path, so the app persists the
+  last requested value.
+- Phantom power and Hi-Z are exposed as input source modes, not independent
+  toggles, until separate hardware controls are verified.
+
+## Requirements
+
+- macOS with Swift, clang, and the Apple developer command line tools
+- Original Apogee ONE USB interface connected
+- A local build; no binary release is published yet
+
+## Build
 
 ```sh
-make probe
-.build/apogee-one-probe --read-controls
-make coreaudio-probe
-.build/coreaudio-probe
 make one-control
 make app
 make package
+```
+
+Build outputs:
+
+- `.build/one-control`
+- `.build/OneMaestro.app`
+- `.build/OneMaestro.zip`
+
+Open the app:
+
+```sh
+open .build/OneMaestro.app
+```
+
+## CLI
+
+Useful read commands:
+
+```sh
 .build/one-control status
 .build/one-control status --json
 .build/one-control output --json
 .build/one-control input --json
 .build/one-control monitor --json
-.build/one-control monitor --volume-db -48 --dry-run
-.build/one-control monitor --mix-dry-run --ext-mic-level 48 --inst-int-level 63
 .build/one-control self-test
 ```
 
@@ -58,28 +76,54 @@ Examples that change hardware state:
 
 ```sh
 .build/one-control input --source inst
+.build/one-control output --macos-volume-db -24
 .build/one-control monitor --volume-db -48
 ```
 
-`one-control` opens the ONE through `IOUSBHost`, so run one instance at a time.
-Parallel invocations can collide because the USBHost user client is exclusive.
 `self-test` performs no-op writes: it writes current values back to the same
 controls, then verifies readback.
-`status --json` is the app-facing read API for the current prototype.
-`output --json`, `input --json`, and `monitor --json` are the app-facing command
-result APIs for writes and dry-runs.
-`make app` builds a first SwiftUI wrapper at `.build/OneMaestro.app`; the app
-bundles `one-control` and uses the JSON status/control CLI internally.
+
+## Monitoring
 
 `monitor --volume-db` uses the audible, confirmed direct-input monitor mix send
 from the legacy `ONEUSB::UpdateLLM()` path. Raw hardware values are inverted:
 `0` is loud and `63` is silent or near-silent, so the CLI exposes a conventional
-`-63..0 dB` user range. The older `bRequest=0x06` attenuation path is still
-available as `--legacy-volume-db`/`--legacy-attenuation-db`; it is accepted by
-the device but did not change audible monitoring in live tests.
-The app also exposes conservative monitor preset points at `-63`, `-54`, `-48`,
-and `-36 dB` for repeatable listening checks.
+`-63..0 dB` user range.
 
-Project plan: [Apogee ONE Maestro Replacement](docs/apogee-one-maestro-plan.md).
-Reverse-engineering notes: [Legacy ONE Findings](docs/legacy-one-reverse-engineering.md).
-Operator test checklist: [Operator Test Checklist](docs/operator-test-checklist.md).
+The older `bRequest=0x06` attenuation path is still available as
+`--legacy-volume-db`/`--legacy-attenuation-db`; the device accepts it, but live
+tests did not find an audible monitoring change.
+
+The app exposes monitor presets at `-63`, `-54`, `-36`, and `-18 dB`.
+
+## Hardware Notes
+
+Current observed device:
+
+- USB vendor: Apogee (`0x0c60`)
+- USB product: ONE (`0x0003`)
+- USB Audio Class: UAC1, full-speed USB, 24-bit PCM at 44.1/48 kHz
+- Streams advertised by descriptors: 2-channel output, 1-channel input
+
+On this Mac, Core Audio exposes `ONE` as an Apogee USB audio device with 1 input
+channel and 2 output channels. In the Codex sandbox, Core Audio enumeration and
+`IOUSBHost` writes may be blocked; run live hardware checks outside the sandbox.
+
+## Documentation
+
+- [Project plan](docs/apogee-one-maestro-plan.md)
+- [Reverse-engineering notes](docs/legacy-one-reverse-engineering.md)
+- [Operator test checklist](docs/operator-test-checklist.md)
+
+## Publishing Checklist
+
+Before making the GitHub repository public:
+
+- Decide whether to attach `.build/OneMaestro.zip` as a release artifact.
+- Run the [operator test checklist](docs/operator-test-checklist.md) on the
+  target Mac with the ONE connected.
+- Add any hardware compatibility notes from additional ONE units.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
