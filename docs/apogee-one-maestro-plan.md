@@ -114,6 +114,8 @@ absent, and `ONEDaemon` is not accepting Maestro private-property traffic.
   Core Audio volume/mute state can be compared.
   Input source metadata marks 48V and Hi-Z source modes.
 - `.build/one-control output`: read-only output status.
+- `.build/one-control output --json`: structured app-facing output command
+  result, including refreshed main-output and headphone state.
 - `.build/one-control output --volume-db <db>`: guarded UAC `SET_CUR` for main
   output level.
 - `.build/one-control output --mute on|off`: guarded UAC `SET_CUR` for main
@@ -121,6 +123,8 @@ absent, and `ONEDaemon` is not accepting Maestro private-property traffic.
 - `.build/one-control output --headphone-mute on|off`: guarded UAC `SET_CUR`
   for headphone mute.
 - `.build/one-control input`: read-only source/gain status.
+- `.build/one-control input --json`: structured app-facing input command
+  result, including source metadata and current gain state.
 - `.build/one-control input --source <int-mic|ext-mic|ext-48v-mic|inst>`:
   guarded UAC `SET_CUR` for the input selector by Maestro source name.
 - `.build/one-control input --source-pin <1..4>`: guarded UAC `SET_CUR` for the
@@ -131,6 +135,8 @@ absent, and `ONEDaemon` is not accepting Maestro private-property traffic.
   current selected input gain, or for the selected source if paired with
   `--source-pin`/`--source-unit`.
 - `.build/one-control monitor`: monitor-volume discovery status.
+- `.build/one-control monitor --json`: structured app-facing monitor status or
+  command result.
 - `.build/one-control monitor --volume-db <db> --dry-run`: prints the
   current-source direct monitor send value without sending it.
 - `.build/one-control monitor --volume-db <db>`: confirmed direct-input monitor
@@ -150,6 +156,8 @@ absent, and `ONEDaemon` is not accepting Maestro private-property traffic.
 - `.build/OneMaestro.app`: first SwiftUI wrapper built by `make app`. It uses
   bundled `one-control` for status, output volume/mute, input source/gain, and
   monitor volume commands.
+- The app/helper boundary now uses JSON for reads, writes, and monitor dry-runs:
+  `status --json`, `output --json`, `input --json`, and `monitor --json`.
 - App-side persistence stores monitor volume, input source/gain, output
   mute/level, and last seen Core Audio UID in `UserDefaults`.
 - The app polls status every four seconds and shows a disconnected state when
@@ -181,6 +189,9 @@ Verified write behavior:
   tested values.
 - The app bundle builds, its Info.plist validates, and its bundled
   `one-control status --json` reads the connected ONE outside the sandbox.
+- Structured helper result checks passed for `output --json`, `input --json`,
+  `monitor --json --volume-db -48 --dry-run`, and a no-op
+  `output --json --volume-db -20`.
 
 One behavior to track: direct UAC reads and Core Audio control reads can disagree
 for output volume. Current JSON exposes both values; recent live reads showed
@@ -243,8 +254,9 @@ to Maestro's Main Out level versus macOS output volume.
 
 Turn the working prototype into a usable local product:
 
-1. Replace the SwiftUI shell-out flow with a shared `ControlCore` module, or at
-   least a stricter command/result contract for the current bundled CLI.
+1. Move the current shell-out implementation to a shared `ControlCore` module
+   or XPC/helper boundary. The interim stricter JSON command/result contract is
+   implemented.
 2. Run the operator test checklist end-to-end from the app UI, including
    unplug/replug behavior.
 3. Calibrate the monitor volume curve with more listening points than `0`,

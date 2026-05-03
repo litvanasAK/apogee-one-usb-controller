@@ -7,6 +7,14 @@ struct StatusEnvelope: Decodable {
     let device: DeviceStatus
 }
 
+struct CommandEnvelope: Decodable {
+    let ok: Bool
+    let command: String
+    let changed: Bool
+    let dryRun: Bool
+    let message: String
+}
+
 struct DeviceStatus: Decodable {
     let vendorId: Int
     let productId: Int
@@ -276,8 +284,9 @@ final class DeviceModel: ObservableObject {
         defer { busy = false }
 
         do {
-            let output = try await OneControlRunner.run(command)
-            message = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            let output = try await OneControlRunner.run(jsonCommand(command))
+            let result = try JSONDecoder().decode(CommandEnvelope.self, from: Data(output.utf8))
+            message = result.message
             persistEditableState()
             if reload {
                 await reloadStatus(showBusy: false)
@@ -327,6 +336,13 @@ final class DeviceModel: ObservableObject {
 
     private func dbArgument(_ value: Double) -> String {
         String(format: "%.0f", value)
+    }
+
+    private func jsonCommand(_ command: [String]) -> [String] {
+        guard let first = command.first, first != "status", !command.contains("--json") else {
+            return command
+        }
+        return [first, "--json"] + command.dropFirst()
     }
 
     private func loadPersistedState() {

@@ -21,6 +21,9 @@ Expected results:
 
 ```sh
 .build/one-control status --json
+.build/one-control output --json
+.build/one-control input --json
+.build/one-control monitor --json
 ```
 
 Expected results:
@@ -30,6 +33,7 @@ Expected results:
 - USB vendor is `0x0c60`.
 - USB product is `0x0003`.
 - Input sources include `int-mic`, `ext-mic`, `ext-48v-mic`, and `inst`.
+- Output, input, and monitor JSON commands return `ok: true`.
 
 ## No-Op Write Safety
 

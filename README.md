@@ -46,9 +46,9 @@ make app
 make package
 .build/one-control status
 .build/one-control status --json
-.build/one-control output
-.build/one-control input
-.build/one-control monitor
+.build/one-control output --json
+.build/one-control input --json
+.build/one-control monitor --json
 .build/one-control monitor --volume-db -48 --dry-run
 .build/one-control monitor --mix-dry-run --ext-mic-level 48 --inst-int-level 63
 .build/one-control self-test
@@ -66,6 +66,8 @@ Parallel invocations can collide because the USBHost user client is exclusive.
 `self-test` performs no-op writes: it writes current values back to the same
 controls, then verifies readback.
 `status --json` is the app-facing read API for the current prototype.
+`output --json`, `input --json`, and `monitor --json` are the app-facing command
+result APIs for writes and dry-runs.
 `make app` builds a first SwiftUI wrapper at `.build/OneMaestro.app`; the app
 bundles `one-control` and uses the JSON status/control CLI internally.
 

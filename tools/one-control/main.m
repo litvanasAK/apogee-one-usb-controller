@@ -185,13 +185,13 @@ static void print_nserror(const char *context, NSError *error) {
 static void print_usage(void) {
     puts("Usage:");
     puts("  one-control status [--json]");
-    puts("  one-control output [--volume-db <db>] [--mute on|off] [--headphone-mute on|off]");
-    puts("  one-control input [--source <int-mic|ext-mic|ext-48v-mic|inst>]");
+    puts("  one-control output [--json] [--volume-db <db>] [--mute on|off] [--headphone-mute on|off]");
+    puts("  one-control input [--json] [--source <int-mic|ext-mic|ext-48v-mic|inst>]");
     puts("                    [--source-pin <1..4>|--source-unit <5|9|11|13>] [--gain-db <db>]");
-    puts("  one-control monitor [--dry-run] [--volume-db <db>|--attenuation-db <db>]");
-    puts("  one-control monitor [--dry-run] [--legacy-volume-db <db>|--legacy-attenuation-db <db>]");
-    puts("  one-control monitor --mix-dry-run --ext-mic-level <0..63> --inst-int-level <0..63>");
-    puts("  one-control monitor --mix-levels --ext-mic-level <0..63> --inst-int-level <0..63>");
+    puts("  one-control monitor [--json] [--dry-run] [--volume-db <db>|--attenuation-db <db>]");
+    puts("  one-control monitor [--json] [--dry-run] [--legacy-volume-db <db>|--legacy-attenuation-db <db>]");
+    puts("  one-control monitor [--json] --mix-dry-run --ext-mic-level <0..63> --inst-int-level <0..63>");
+    puts("  one-control monitor [--json] --mix-levels --ext-mic-level <0..63> --inst-int-level <0..63>");
     puts("  one-control self-test");
     puts("");
     puts("Notes:");
@@ -1648,18 +1648,21 @@ static NSDictionary *json_monitor_status(void) {
     };
 }
 
-static NSDictionary *json_status(IOUSBHostDevice *device) {
-    NSMutableDictionary *uac = [NSMutableDictionary dictionary];
-    [uac setObject:@{
-        @"featureUnit": @(kOutputFeatureUnit),
-        @"mute": json_mute_value(device, kOutputFeatureUnit),
-        @"volume": json_volume_state(read_volume_state(device, kOutputFeatureUnit)),
-    } forKey:@"mainOutput"];
-    [uac setObject:@{
-        @"featureUnit": @(kHeadphoneFeatureUnit),
-        @"mute": json_mute_value(device, kHeadphoneFeatureUnit),
-    } forKey:@"headphone"];
+static NSDictionary *json_output_status(IOUSBHostDevice *device) {
+    return @{
+        @"mainOutput": @{
+            @"featureUnit": @(kOutputFeatureUnit),
+            @"mute": json_mute_value(device, kOutputFeatureUnit),
+            @"volume": json_volume_state(read_volume_state(device, kOutputFeatureUnit)),
+        },
+        @"headphone": @{
+            @"featureUnit": @(kHeadphoneFeatureUnit),
+            @"mute": json_mute_value(device, kHeadphoneFeatureUnit),
+        },
+    };
+}
 
+static NSDictionary *json_input_status(IOUSBHostDevice *device) {
     NSMutableDictionary *input = [NSMutableDictionary dictionary];
     [input setObject:@(kInputSelectorUnit) forKey:@"selectorUnit"];
     [input setObject:json_input_sources() forKey:@"sources"];
@@ -1670,7 +1673,29 @@ static NSDictionary *json_status(IOUSBHostDevice *device) {
         [input setObject:json_input_source(source) forKey:@"currentSource"];
         [input setObject:json_volume_state(read_volume_state(device, source->feature_unit)) forKey:@"currentGain"];
     }
-    [uac setObject:input forKey:@"input"];
+
+    return input;
+}
+
+static NSMutableDictionary *json_command_result(NSString *command,
+                                                bool changed,
+                                                bool dry_run,
+                                                NSString *message) {
+    return [@{
+        @"ok": @YES,
+        @"command": command,
+        @"changed": json_bool(changed),
+        @"dryRun": json_bool(dry_run),
+        @"message": message,
+    } mutableCopy];
+}
+
+static NSDictionary *json_status(IOUSBHostDevice *device) {
+    NSMutableDictionary *uac = [NSMutableDictionary dictionary];
+    NSDictionary *output = json_output_status(device);
+    [uac setObject:output[@"mainOutput"] forKey:@"mainOutput"];
+    [uac setObject:output[@"headphone"] forKey:@"headphone"];
+    [uac setObject:json_input_status(device) forKey:@"input"];
 
     return @{
         @"device": @{
@@ -1787,8 +1812,11 @@ static int command_status(IOUSBHostDevice *device, int argc, const char *argv[])
 
 static int command_output(IOUSBHostDevice *device, int argc, const char *argv[]) {
     bool changed = false;
+    bool json = false;
     for (int i = 2; i < argc; i++) {
-        if (strcmp(argv[i], "--volume-db") == 0 && i + 1 < argc) {
+        if (strcmp(argv[i], "--json") == 0) {
+            json = true;
+        } else if (strcmp(argv[i], "--volume-db") == 0 && i + 1 < argc) {
             double db = 0;
             if (!parse_double_arg(argv[++i], &db)) {
                 fprintf(stderr, "Invalid --volume-db value: %s\n", argv[i]);
@@ -1824,6 +1852,15 @@ static int command_output(IOUSBHostDevice *device, int argc, const char *argv[])
         }
     }
 
+    if (json) {
+        NSMutableDictionary *result = json_command_result(@"output",
+                                                          changed,
+                                                          false,
+                                                          changed ? @"Output updated" : @"Output status");
+        [result setObject:json_output_status(device) forKey:@"output"];
+        return print_json_object(result);
+    }
+
     if (changed) {
         puts("output: updated");
     }
@@ -1837,10 +1874,13 @@ static int command_input(IOUSBHostDevice *device, int argc, const char *argv[]) 
     const InputSource *selected_source = NULL;
     bool set_source = false;
     bool set_gain = false;
+    bool json = false;
     double gain_db = 0;
 
     for (int i = 2; i < argc; i++) {
-        if (strcmp(argv[i], "--source") == 0 && i + 1 < argc) {
+        if (strcmp(argv[i], "--json") == 0) {
+            json = true;
+        } else if (strcmp(argv[i], "--source") == 0 && i + 1 < argc) {
             if (!(selected_source = source_for_name(argv[++i]))) {
                 fprintf(stderr, "Invalid --source value: %s\n", argv[i]);
                 fputs("Valid sources: int-mic, ext-mic, ext-48v-mic, inst\n", stderr);
@@ -1888,6 +1928,15 @@ static int command_input(IOUSBHostDevice *device, int argc, const char *argv[]) 
         }
     }
 
+    if (json) {
+        NSMutableDictionary *result = json_command_result(@"input",
+                                                          set_source || set_gain,
+                                                          false,
+                                                          (set_source || set_gain) ? @"Input updated" : @"Input status");
+        [result setObject:json_input_status(device) forKey:@"input"];
+        return print_json_object(result);
+    }
+
     if (set_source || set_gain) {
         puts("input: updated");
     }
@@ -1905,15 +1954,20 @@ static int command_monitor(IOUSBHostDevice *device, int argc, const char *argv[]
     bool dry_run = false;
     bool mix_dry_run = false;
     bool mix_write = false;
+    bool json = false;
     bool have_ext_mic_level = false;
     bool have_inst_int_level = false;
+    double requested_volume_db = 0;
+    double requested_attenuation_db = 0;
     double legacy_attenuation_db = 0;
     uint8_t mix_raw_level = 0;
     uint8_t ext_mic_level = 0;
     uint8_t inst_int_level = 0;
 
     for (int i = 2; i < argc; i++) {
-        if (strcmp(argv[i], "--attenuation-db") == 0 && i + 1 < argc) {
+        if (strcmp(argv[i], "--json") == 0) {
+            json = true;
+        } else if (strcmp(argv[i], "--attenuation-db") == 0 && i + 1 < argc) {
             if (set_mix_volume) {
                 fputs("Use only one monitor level argument.\n", stderr);
                 return 64;
@@ -1926,6 +1980,8 @@ static int command_monitor(IOUSBHostDevice *device, int argc, const char *argv[]
             if (!monitor_mix_raw_from_attenuation_db(attenuation_db, &mix_raw_level)) {
                 return 64;
             }
+            requested_attenuation_db = attenuation_db;
+            requested_volume_db = -attenuation_db;
             set_mix_volume = true;
         } else if (strcmp(argv[i], "--volume-db") == 0 && i + 1 < argc) {
             if (set_mix_volume) {
@@ -1940,6 +1996,8 @@ static int command_monitor(IOUSBHostDevice *device, int argc, const char *argv[]
             if (!monitor_mix_raw_from_volume_db(volume_db, &mix_raw_level)) {
                 return 64;
             }
+            requested_volume_db = volume_db;
+            requested_attenuation_db = -volume_db;
             set_mix_volume = true;
         } else if (strcmp(argv[i], "--legacy-attenuation-db") == 0 && i + 1 < argc) {
             if (set_legacy_attenuation) {
@@ -2014,6 +2072,20 @@ static int command_monitor(IOUSBHostDevice *device, int argc, const char *argv[]
         }
 
         if (mix_dry_run) {
+            if (json) {
+                NSMutableDictionary *result = json_command_result(@"monitor",
+                                                                  false,
+                                                                  true,
+                                                                  @"Monitor mix dry run");
+                [result setObject:@{
+                    @"mode": @"directInputMixRaw",
+                    @"extMicLevel": @(ext_mic_level),
+                    @"instIntLevel": @(inst_int_level),
+                    @"bRequest": @(kONEVendorRemoteI2CWrite),
+                    @"readback": @NO,
+                } forKey:@"monitor"];
+                return print_json_object(result);
+            }
             print_llm_mix_dry_run(ext_mic_level, inst_int_level);
             return 0;
         }
@@ -2024,6 +2096,20 @@ static int command_monitor(IOUSBHostDevice *device, int argc, const char *argv[]
         }
         if (!set_llm_mix_levels(device, ext_mic_level, inst_int_level)) {
             return 1;
+        }
+        if (json) {
+            NSMutableDictionary *result = json_command_result(@"monitor",
+                                                              true,
+                                                              false,
+                                                              @"Monitor mix updated");
+            [result setObject:@{
+                @"mode": @"directInputMixRaw",
+                @"extMicLevel": @(ext_mic_level),
+                @"instIntLevel": @(inst_int_level),
+                @"bRequest": @(kONEVendorRemoteI2CWrite),
+                @"readback": @NO,
+            } forKey:@"monitor"];
+            return print_json_object(result);
         }
         printf("monitor: sent direct input monitor mix ext-mic=%u inst/int=%u (vendor request 0x%02x)\n",
                ext_mic_level,
@@ -2039,12 +2125,35 @@ static int command_monitor(IOUSBHostDevice *device, int argc, const char *argv[]
     }
 
     if (!set_mix_volume && !set_legacy_attenuation) {
+        if (json) {
+            NSMutableDictionary *result = json_command_result(@"monitor",
+                                                              false,
+                                                              false,
+                                                              @"Monitor status");
+            [result setObject:json_monitor_status() forKey:@"monitor"];
+            return print_json_object(result);
+        }
         print_monitor_discovery();
         return 0;
     }
 
     if (set_mix_volume) {
         if (dry_run && !device) {
+            if (json) {
+                NSMutableDictionary *result = json_command_result(@"monitor",
+                                                                  false,
+                                                                  true,
+                                                                  @"Monitor volume dry run");
+                [result setObject:@{
+                    @"mode": @"directInputMix",
+                    @"volumeDb": @(requested_volume_db),
+                    @"attenuationDb": @(requested_attenuation_db),
+                    @"rawLevel": @(mix_raw_level),
+                    @"rawDirection": @"0 loud, 63 quiet",
+                    @"readback": @NO,
+                } forKey:@"monitor"];
+                return print_json_object(result);
+            }
             printf("monitor: dry run; would set current input direct-monitor raw attenuation %u (0=loud, 63=quiet)\n",
                    mix_raw_level);
             puts("monitor: open the device or use --mix-dry-run to see exact ext/inst request fields.");
@@ -2064,6 +2173,25 @@ static int command_monitor(IOUSBHostDevice *device, int argc, const char *argv[]
 
         monitor_mix_levels_for_source(source, mix_raw_level, &ext_mic_level, &inst_int_level);
         if (dry_run) {
+            if (json) {
+                NSMutableDictionary *result = json_command_result(@"monitor",
+                                                                  false,
+                                                                  true,
+                                                                  @"Monitor volume dry run");
+                [result setObject:@{
+                    @"mode": @"directInputMix",
+                    @"source": json_input_source(source),
+                    @"volumeDb": @(requested_volume_db),
+                    @"attenuationDb": @(requested_attenuation_db),
+                    @"rawLevel": @(mix_raw_level),
+                    @"extMicLevel": @(ext_mic_level),
+                    @"instIntLevel": @(inst_int_level),
+                    @"rawDirection": @"0 loud, 63 quiet",
+                    @"bRequest": @(kONEVendorRemoteI2CWrite),
+                    @"readback": @NO,
+                } forKey:@"monitor"];
+                return print_json_object(result);
+            }
             printf("monitor: current source %s; raw attenuation %u (0=loud, 63=quiet)\n",
                    source->cli_name,
                    mix_raw_level);
@@ -2073,6 +2201,25 @@ static int command_monitor(IOUSBHostDevice *device, int argc, const char *argv[]
 
         if (!set_llm_mix_levels(device, ext_mic_level, inst_int_level)) {
             return 1;
+        }
+        if (json) {
+            NSMutableDictionary *result = json_command_result(@"monitor",
+                                                              true,
+                                                              false,
+                                                              @"Monitor volume updated");
+            [result setObject:@{
+                @"mode": @"directInputMix",
+                @"source": json_input_source(source),
+                @"volumeDb": @(requested_volume_db),
+                @"attenuationDb": @(requested_attenuation_db),
+                @"rawLevel": @(mix_raw_level),
+                @"extMicLevel": @(ext_mic_level),
+                @"instIntLevel": @(inst_int_level),
+                @"rawDirection": @"0 loud, 63 quiet",
+                @"bRequest": @(kONEVendorRemoteI2CWrite),
+                @"readback": @NO,
+            } forKey:@"monitor"];
+            return print_json_object(result);
         }
         printf("monitor: set %s direct-monitor volume raw=%u (ext-mic=%u inst/int=%u)\n",
                source->cli_name,
@@ -2090,6 +2237,22 @@ static int command_monitor(IOUSBHostDevice *device, int argc, const char *argv[]
     }
 
     if (dry_run) {
+        if (json) {
+            NSMutableDictionary *result = json_command_result(@"monitor",
+                                                              false,
+                                                              true,
+                                                              @"Legacy monitor attenuation dry run");
+            [result setObject:@{
+                @"mode": @"legacyOutputAttenuation",
+                @"attenuationDb": @(rounded_attenuation),
+                @"volumeDb": @(-rounded_attenuation),
+                @"bRequest": @(kONEVendorSetLLMOutputAttenuation),
+                @"wValue": @(request_value),
+                @"audibleEffectConfirmed": @NO,
+                @"readback": @NO,
+            } forKey:@"monitor"];
+            return print_json_object(result);
+        }
         printf("monitor: dry run; would send legacy low-latency output attenuation %d dB\n",
                rounded_attenuation);
         printf("monitor: vendor OUT request bmRequestType=0x40 bRequest=0x%02x wValue=%d wIndex=0 wLength=0\n",
@@ -2105,6 +2268,23 @@ static int command_monitor(IOUSBHostDevice *device, int argc, const char *argv[]
 
     if (!set_monitor_attenuation_db(device, legacy_attenuation_db, &rounded_attenuation, &request_value)) {
         return 1;
+    }
+
+    if (json) {
+        NSMutableDictionary *result = json_command_result(@"monitor",
+                                                          true,
+                                                          false,
+                                                          @"Legacy monitor attenuation sent");
+        [result setObject:@{
+            @"mode": @"legacyOutputAttenuation",
+            @"attenuationDb": @(rounded_attenuation),
+            @"volumeDb": @(-rounded_attenuation),
+            @"bRequest": @(kONEVendorSetLLMOutputAttenuation),
+            @"wValue": @(request_value),
+            @"audibleEffectConfirmed": @NO,
+            @"readback": @NO,
+        } forKey:@"monitor"];
+        return print_json_object(result);
     }
 
     printf("monitor: sent legacy low-latency output attenuation %d dB (vendor request 0x%02x wValue=%d)\n",
