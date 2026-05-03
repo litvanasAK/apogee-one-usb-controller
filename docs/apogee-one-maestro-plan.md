@@ -143,6 +143,15 @@ absent, and `ONEDaemon` is not accepting Maestro private-property traffic.
 - `.build/OneMaestro.app`: first SwiftUI wrapper built by `make app`. It uses
   bundled `one-control` for status, output volume/mute, input source/gain, and
   monitor volume commands.
+- App-side persistence stores monitor volume, input source/gain, output
+  mute/level, and last seen Core Audio UID in `UserDefaults`.
+- The app polls status every four seconds and shows a disconnected state when
+  the bundled helper cannot read the device.
+- The app includes a compact diagnostics disclosure with USB IDs, Core Audio
+  UID/roles, UAC entity IDs, monitor request status, and legacy request status.
+- `make package` ad-hoc signs the app bundle and creates `.build/OneMaestro.zip`.
+- [Operator Test Checklist](operator-test-checklist.md) captures the live smoke
+  test sequence.
 
 The CLI opens the ONE through `IOUSBHost`; run one instance at a time because
 the user client is exclusive.
@@ -225,10 +234,11 @@ Turn the working prototype into a usable local product:
 
 1. Replace the SwiftUI shell-out flow with a shared `ControlCore` module, or at
    least a stricter command/result contract for the current bundled CLI.
-2. Add app-side state persistence for monitor volume, selected source, input
-   gain, output mute/level, and last seen device UID.
-3. Add reconnect polling and clear disconnected/error states.
-4. Add a compact advanced diagnostics view with raw entity IDs, current Core
-   Audio roles, and the legacy request status.
-5. Package the app bundle with a repeatable build/signing step and a short
-   operator test checklist.
+2. Run the operator test checklist end-to-end from the app UI, including
+   unplug/replug behavior.
+3. Calibrate the monitor volume curve with more listening points than `0`,
+   `48`, and `63`.
+4. Resolve the direct UAC output volume versus Core Audio output volume
+   discrepancy.
+5. Decide whether phantom power and Hi-Z should remain source modes or be
+   surfaced as separate controls.

@@ -43,6 +43,7 @@ make coreaudio-probe
 .build/coreaudio-probe
 make one-control
 make app
+make package
 .build/one-control status
 .build/one-control status --json
 .build/one-control output
@@ -77,3 +78,4 @@ the device but did not change audible monitoring in live tests.
 
 Project plan: [Apogee ONE Maestro Replacement](docs/apogee-one-maestro-plan.md).
 Reverse-engineering notes: [Legacy ONE Findings](docs/legacy-one-reverse-engineering.md).
+Operator test checklist: [Operator Test Checklist](docs/operator-test-checklist.md).

@@ -8,6 +8,8 @@ struct StatusEnvelope: Decodable {
 }
 
 struct DeviceStatus: Decodable {
+    let vendorId: Int
+    let productId: Int
     let coreAudio: CoreAudioStatus
     let uac: UACStatus
     let monitor: MonitorStatus
@@ -17,6 +19,7 @@ struct CoreAudioStatus: Decodable {
     let visible: Bool
     let name: String?
     let manufacturer: String?
+    let uid: String?
     let nominalSampleRate: Double?
     let inputChannels: Int?
     let outputChannels: Int?
@@ -78,12 +81,16 @@ struct MonitorStatus: Decodable {
 struct MonitorWriteStatus: Decodable {
     let enabled: Bool
     let readback: Bool
+    let bRequest: Int?
+    let audibleEffectConfirmed: Bool?
     let volumeDbRange: [Double]?
 }
 
 struct MonitorMixStatus: Decodable {
     let enabled: Bool
     let dryRunOnly: Bool
+    let bRequest: Int?
+    let rawDirection: String?
     let levelRange: [Int]?
     let volumeDbRange: [Double]?
 }
@@ -152,9 +159,20 @@ final class DeviceModel: ObservableObject {
     @Published var outputMuted = false
     @Published var inputSource = "ext-48v-mic"
     @Published var inputGainDb: Double = 0
-    @Published var monitorVolumeDb: Double = -24
+    @Published var monitorVolumeDb: Double = -48
     @Published var busy = false
     @Published var message = ""
+    @Published var lastSeenUID = ""
+
+    private var syncingFromDevice = false
+
+    var shouldIgnoreControlChanges: Bool {
+        syncingFromDevice || busy
+    }
+
+    init() {
+        loadPersistedState()
+    }
 
     var outputRange: ClosedRange<Double> {
         range(from: status?.uac.mainOutput.volume, fallback: -64...0)
@@ -173,6 +191,13 @@ final class DeviceModel: ObservableObject {
 
     func refresh() async {
         await runAndReload(nil)
+    }
+
+    func pollStatus() async {
+        while !Task.isCancelled {
+            await reloadStatus(showBusy: false)
+            try? await Task.sleep(for: .seconds(4))
+        }
     }
 
     func applyOutputVolume() async {
@@ -214,28 +239,42 @@ final class DeviceModel: ObservableObject {
         do {
             let output = try await OneControlRunner.run(command)
             message = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            persistEditableState()
             if reload {
-                await reloadStatus()
+                await reloadStatus(showBusy: false)
             }
         } catch {
             message = error.localizedDescription
         }
     }
 
-    private func reloadStatus() async {
-        busy = true
-        defer { busy = false }
+    private func reloadStatus(showBusy: Bool = true) async {
+        if showBusy {
+            busy = true
+        }
+        defer {
+            if showBusy {
+                busy = false
+            }
+        }
 
         do {
             let output = try await OneControlRunner.run(["status", "--json"])
             let decoded = try JSONDecoder().decode(StatusEnvelope.self, from: Data(output.utf8))
+            syncingFromDevice = true
             status = decoded.device
             outputVolumeDb = decoded.device.uac.mainOutput.volume.currentDb ?? outputVolumeDb
             outputMuted = decoded.device.uac.mainOutput.mute ?? false
             inputSource = decoded.device.uac.input.currentSource?.cliName ?? inputSource
             inputGainDb = decoded.device.uac.input.currentGain?.currentDb ?? inputGainDb
+            lastSeenUID = decoded.device.coreAudio.uid ?? lastSeenUID
+            syncingFromDevice = false
+            persistEditableState()
             message = "Ready"
         } catch {
+            syncingFromDevice = true
+            status = nil
+            syncingFromDevice = false
             message = error.localizedDescription
         }
     }
@@ -250,6 +289,38 @@ final class DeviceModel: ObservableObject {
     private func dbArgument(_ value: Double) -> String {
         String(format: "%.0f", value)
     }
+
+    private func loadPersistedState() {
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: "outputVolumeDb") != nil {
+            outputVolumeDb = defaults.double(forKey: "outputVolumeDb")
+        }
+        if defaults.object(forKey: "outputMuted") != nil {
+            outputMuted = defaults.bool(forKey: "outputMuted")
+        }
+        if let source = defaults.string(forKey: "inputSource") {
+            inputSource = source
+        }
+        if defaults.object(forKey: "inputGainDb") != nil {
+            inputGainDb = defaults.double(forKey: "inputGainDb")
+        }
+        if defaults.object(forKey: "monitorVolumeDb") != nil {
+            monitorVolumeDb = defaults.double(forKey: "monitorVolumeDb")
+        }
+        if let uid = defaults.string(forKey: "lastSeenUID") {
+            lastSeenUID = uid
+        }
+    }
+
+    private func persistEditableState() {
+        let defaults = UserDefaults.standard
+        defaults.set(outputVolumeDb, forKey: "outputVolumeDb")
+        defaults.set(outputMuted, forKey: "outputMuted")
+        defaults.set(inputSource, forKey: "inputSource")
+        defaults.set(inputGainDb, forKey: "inputGainDb")
+        defaults.set(monitorVolumeDb, forKey: "monitorVolumeDb")
+        defaults.set(lastSeenUID, forKey: "lastSeenUID")
+    }
 }
 
 struct ContentView: View {
@@ -262,13 +333,14 @@ struct ContentView: View {
             outputSection
             inputSection
             monitorSection
+            diagnosticsSection
             Spacer(minLength: 0)
             footer
         }
         .padding(22)
         .frame(minWidth: 620, minHeight: 540)
         .task {
-            await model.refresh()
+            await model.pollStatus()
         }
     }
 
@@ -309,6 +381,7 @@ struct ContentView: View {
             }
             Toggle("Mute", isOn: $model.outputMuted)
                 .onChange(of: model.outputMuted) {
+                    guard !model.shouldIgnoreControlChanges else { return }
                     Task { await model.applyOutputMute() }
                 }
                 .disabled(model.busy)
@@ -326,6 +399,7 @@ struct ContentView: View {
                 }
                 .pickerStyle(.segmented)
                 .onChange(of: model.inputSource) {
+                    guard !model.shouldIgnoreControlChanges else { return }
                     Task { await model.applyInputSource() }
                 }
                 .disabled(model.busy)
@@ -386,13 +460,88 @@ struct ContentView: View {
         .frame(minHeight: 28)
     }
 
+    private var diagnosticsSection: some View {
+        DisclosureGroup {
+            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 6) {
+                diagnosticRow("USB", usbLine)
+                diagnosticRow("Core Audio", coreAudioLine)
+                diagnosticRow("Output", outputDiagnosticLine)
+                diagnosticRow("Input", inputDiagnosticLine)
+                diagnosticRow("Monitor", monitorDiagnosticLine)
+                diagnosticRow("Legacy", legacyDiagnosticLine)
+            }
+            .font(.caption)
+            .textSelection(.enabled)
+            .padding(.top, 6)
+        } label: {
+            sectionTitle("Diagnostics")
+        }
+    }
+
     private var statusLine: String {
         guard let status = model.status else {
-            return "Disconnected"
+            if model.lastSeenUID.isEmpty {
+                return "Disconnected"
+            }
+            return "Disconnected - last seen \(model.lastSeenUID)"
         }
         let rate = status.coreAudio.nominalSampleRate.map { "\(Int($0)) Hz" } ?? "rate unavailable"
         let output = status.coreAudio.defaultRoles?.output == true ? "default output" : "not default output"
         return "\(status.coreAudio.manufacturer ?? "Apogee") - \(output) - \(rate)"
+    }
+
+    private var usbLine: String {
+        guard let status = model.status else {
+            return "unavailable"
+        }
+        return String(format: "vendor 0x%04x product 0x%04x", status.vendorId, status.productId)
+    }
+
+    private var coreAudioLine: String {
+        guard let status = model.status else {
+            return "unavailable"
+        }
+        let roles = status.coreAudio.defaultRoles
+        return "uid \(status.coreAudio.uid ?? "unavailable"), in \(roles?.input == true ? "yes" : "no"), out \(roles?.output == true ? "yes" : "no"), system \(roles?.systemOutput == true ? "yes" : "no")"
+    }
+
+    private var outputDiagnosticLine: String {
+        guard let status = model.status else {
+            return "unavailable"
+        }
+        return "feature \(status.uac.mainOutput.featureUnit), headphone feature \(status.uac.headphone.featureUnit)"
+    }
+
+    private var inputDiagnosticLine: String {
+        guard let input = model.status?.uac.input else {
+            return "unavailable"
+        }
+        let current = input.currentSource.map { "\($0.cliName) pin \($0.pin) feature \($0.featureUnit)" } ?? "unknown"
+        return "selector \(input.selectorUnit), current \(current)"
+    }
+
+    private var monitorDiagnosticLine: String {
+        guard let monitor = model.status?.monitor.directInputMixWrite else {
+            return "unavailable"
+        }
+        return "request 0x\(String(monitor.bRequest ?? 0, radix: 16)), \(monitor.rawDirection ?? "raw direction unavailable")"
+    }
+
+    private var legacyDiagnosticLine: String {
+        guard let legacy = model.status?.monitor.attenuationWrite else {
+            return "unavailable"
+        }
+        let audible = legacy.audibleEffectConfirmed == true ? "audible" : "not audible"
+        return "request 0x\(String(legacy.bRequest ?? 0, radix: 16)), enabled \(legacy.enabled ? "yes" : "no"), \(audible)"
+    }
+
+    private func diagnosticRow(_ label: String, _ value: String) -> some View {
+        GridRow {
+            Text(label)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .monospaced()
+        }
     }
 
     private func sectionTitle(_ text: String) -> some View {
