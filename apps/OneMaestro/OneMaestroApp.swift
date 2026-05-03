@@ -456,6 +456,11 @@ struct ContentView: View {
                     Task { await model.applyOutputMute() }
                 }
                 .disabled(model.busy)
+            if let outputComparisonLine {
+                Text(outputComparisonLine)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -639,6 +644,15 @@ struct ContentView: View {
         model.status?.coreAudio.controls?.first {
             $0.className == "volume" && $0.scopeName == "output"
         }?.values.decibels
+    }
+
+    private var outputComparisonLine: String? {
+        guard let uacDb = model.status?.uac.mainOutput.volume.currentDb,
+              let coreDb = coreAudioOutputVolume,
+              abs(uacDb - coreDb) >= 1 else {
+            return nil
+        }
+        return "Hardware output \(dbText(uacDb)); macOS output \(dbText(coreDb))"
     }
 
     private func diagnosticRow(_ label: String, _ value: String) -> some View {

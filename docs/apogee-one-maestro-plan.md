@@ -172,6 +172,8 @@ absent, and `ONEDaemon` is not accepting Maestro private-property traffic.
   UID/roles, UAC entity IDs, monitor request status, and legacy request status.
 - Diagnostics show both direct UAC main output volume and Core Audio output
   volume so the known output discrepancy is visible instead of hidden.
+- The Output section also shows a concise hardware-vs-macOS volume line when
+  the direct UAC value and Core Audio output value differ by at least `1 dB`.
 - `make package` ad-hoc signs the app bundle and creates `.build/OneMaestro.zip`.
 - [Operator Test Checklist](operator-test-checklist.md) captures the live smoke
   test sequence.
