@@ -109,32 +109,30 @@ enum ControlError: LocalizedError {
     }
 }
 
-enum OneControlRunner {
-    static func run(_ arguments: [String]) async throws -> String {
-        try await Task.detached(priority: .userInitiated) {
-            let toolURL = try controlToolURL()
-            let process = Process()
-            let outputPipe = Pipe()
-            let errorPipe = Pipe()
+actor OneControlExecutor {
+    func run(_ arguments: [String]) throws -> String {
+        let toolURL = try controlToolURL()
+        let process = Process()
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
 
-            process.executableURL = toolURL
-            process.arguments = arguments
-            process.standardOutput = outputPipe
-            process.standardError = errorPipe
+        process.executableURL = toolURL
+        process.arguments = arguments
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
 
-            try process.run()
-            process.waitUntilExit()
+        try process.run()
+        process.waitUntilExit()
 
-            let output = String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(),
-                                encoding: .utf8) ?? ""
-            let error = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(),
-                               encoding: .utf8) ?? ""
-            if process.terminationStatus != 0 {
-                throw ControlError.commandFailed(process.terminationStatus,
-                                                 (error.isEmpty ? output : error).trimmingCharacters(in: .whitespacesAndNewlines))
-            }
-            return output
-        }.value
+        let output = String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(),
+                            encoding: .utf8) ?? ""
+        let error = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(),
+                           encoding: .utf8) ?? ""
+        if process.terminationStatus != 0 {
+            throw ControlError.commandFailed(process.terminationStatus,
+                                             (error.isEmpty ? output : error).trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        return output
     }
 
     private static func controlToolURL() throws -> URL {
@@ -149,6 +147,18 @@ enum OneControlRunner {
         }
 
         throw ControlError.missingTool
+    }
+
+    private func controlToolURL() throws -> URL {
+        try Self.controlToolURL()
+    }
+}
+
+enum OneControlRunner {
+    private static let executor = OneControlExecutor()
+
+    static func run(_ arguments: [String]) async throws -> String {
+        try await executor.run(arguments)
     }
 }
 

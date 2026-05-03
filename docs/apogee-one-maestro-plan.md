@@ -147,6 +147,8 @@ absent, and `ONEDaemon` is not accepting Maestro private-property traffic.
   mute/level, and last seen Core Audio UID in `UserDefaults`.
 - The app polls status every four seconds and shows a disconnected state when
   the bundled helper cannot read the device.
+- The app serializes all bundled helper invocations so polling and user writes
+  do not collide with the ONE's exclusive `IOUSBHost` user client.
 - The app includes a compact diagnostics disclosure with USB IDs, Core Audio
   UID/roles, UAC entity IDs, monitor request status, and legacy request status.
 - `make package` ad-hoc signs the app bundle and creates `.build/OneMaestro.zip`.
