@@ -162,6 +162,8 @@ absent, and `ONEDaemon` is not accepting Maestro private-property traffic.
   mute/level, and last seen Core Audio UID in `UserDefaults`.
 - When the app changes input source, it reapplies the current monitor volume so
   the source-dependent direct-input mix send follows the selected source.
+- The monitor UI includes conservative preset points at `-63`, `-54`, `-48`,
+  and `-36 dB` for repeatable curve checks while the final taper is calibrated.
 - The app polls status every four seconds and shows a disconnected state when
   the bundled helper cannot read the device.
 - The app serializes all bundled helper invocations so polling and user writes
@@ -261,8 +263,9 @@ Turn the working prototype into a usable local product:
    implemented.
 2. Run the operator test checklist end-to-end from the app UI, including
    unplug/replug behavior.
-3. Calibrate the monitor volume curve with more listening points than `0`,
-   `48`, and `63`.
+3. Calibrate the monitor volume curve using the app presets/checklist points
+   plus `0 dB`; the UI now exposes repeatable intermediate points, but the
+   final taper still needs listening or loopback confirmation.
 4. Resolve the direct UAC output volume versus Core Audio output volume
    discrepancy. It is now observable in JSON/app diagnostics but not yet
    semantically resolved.

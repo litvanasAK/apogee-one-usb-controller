@@ -77,6 +77,8 @@ from the legacy `ONEUSB::UpdateLLM()` path. Raw hardware values are inverted:
 `-63..0 dB` user range. The older `bRequest=0x06` attenuation path is still
 available as `--legacy-volume-db`/`--legacy-attenuation-db`; it is accepted by
 the device but did not change audible monitoring in live tests.
+The app also exposes conservative monitor preset points at `-63`, `-54`, `-48`,
+and `-36 dB` for repeatable listening checks.
 
 Project plan: [Apogee ONE Maestro Replacement](docs/apogee-one-maestro-plan.md).
 Reverse-engineering notes: [Legacy ONE Findings](docs/legacy-one-reverse-engineering.md).

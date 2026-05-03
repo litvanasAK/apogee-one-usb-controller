@@ -273,6 +273,11 @@ final class DeviceModel: ObservableObject {
         await runCommand(["monitor", "--volume-db", dbArgument(monitorVolumeDb)], reload: false)
     }
 
+    func applyMonitorPreset(_ db: Double) async {
+        monitorVolumeDb = min(max(db, monitorRange.lowerBound), monitorRange.upperBound)
+        await applyMonitorVolume()
+    }
+
     private func runAndReload(_ command: [String]?) async {
         if let command {
             await runCommand(command, reload: true)
@@ -385,6 +390,12 @@ final class DeviceModel: ObservableObject {
 
 struct ContentView: View {
     @StateObject private var model = DeviceModel()
+    private let monitorPresets: [(label: String, value: Double)] = [
+        ("Silent", -63),
+        ("Quiet", -54),
+        ("Checked", -48),
+        ("Loud", -36),
+    ]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -502,6 +513,14 @@ struct ContentView: View {
                     Label("Apply", systemImage: "slider.horizontal.3")
                 }
                 .disabled(model.busy || !(model.status?.monitor.directInputMixWrite.enabled ?? false))
+            }
+            HStack(spacing: 8) {
+                ForEach(monitorPresets, id: \.label) { preset in
+                    Button(preset.label) {
+                        Task { await model.applyMonitorPreset(preset.value) }
+                    }
+                    .disabled(model.busy || !(model.status?.monitor.directInputMixWrite.enabled ?? false))
+                }
             }
         }
     }

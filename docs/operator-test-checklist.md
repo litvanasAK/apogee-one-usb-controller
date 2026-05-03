@@ -67,13 +67,16 @@ mic source:
 
 ```sh
 .build/one-control monitor --volume-db -63
+.build/one-control monitor --volume-db -54
 .build/one-control monitor --volume-db -48
+.build/one-control monitor --volume-db -36
 .build/one-control monitor --volume-db 0
 ```
 
 Expected results:
 
 - `-63 dB` is silent or near-silent.
+- `-54 dB`, `-48 dB`, and `-36 dB` increase in audible level.
 - `-48 dB` is quiet-audible.
 - `0 dB` is loud.
 - Recording remains unaffected.
@@ -90,7 +93,7 @@ Expected results:
 - Refresh works.
 - Output mute and sliders remain responsive.
 - Input source and gain controls update the device.
-- Monitor volume slider updates direct monitoring.
+- Monitor volume slider and presets update direct monitoring.
 - Diagnostics disclosure shows USB IDs, Core Audio UID, UAC entity IDs, and
   monitor request status.
 
