@@ -21,7 +21,7 @@ Implemented:
 - Input source selection: `Int Mic`, `Ext Mic`, `Ext 48V Mic`, and `Inst`
 - Input gain for the selected source
 - Direct monitor volume through the confirmed direct-input monitor mix send
-- Core Audio output-volume tracking, so the app follows macOS volume changes
+- Core Audio output-volume tracking, so the app follows macOS volume changes when the ONE is the default system output
 - A compact diagnostics panel for USB, Core Audio, UAC, and monitor request state
 
 Known limits:
@@ -94,7 +94,7 @@ The older `bRequest=0x06` attenuation path is still available as
 `--legacy-volume-db`/`--legacy-attenuation-db`; the device accepts it, but live
 tests did not find an audible monitoring change.
 
-The app exposes monitor presets at `-63`, `-54`, `-36`, and `-18 dB`.
+The app exposes monitor presets at `-63`, `-54`, `-36`, and `-18 dB`.\n\n`output --system-volume-db` targets macOS's current default system output device, not the ONE unconditionally. The app only uses this Core Audio path when the ONE is itself the default system output; otherwise its output slider continues to control the ONE's hardware output.
 
 ## Hardware Notes
 
