@@ -185,7 +185,7 @@ static void print_nserror(const char *context, NSError *error) {
 static void print_usage(void) {
     puts("Usage:");
     puts("  one-control status [--json]");
-    puts("  one-control output [--json] [--volume-db <db>|--macos-volume-db <db>]");
+    puts("  one-control output [--json] [--volume-db <db>|--system-volume-db <db>]");
     puts("                     [--mute on|off] [--headphone-mute on|off]");
     puts("  one-control input [--json] [--source <int-mic|ext-mic|ext-48v-mic|inst>]");
     puts("                    [--source-pin <1..4>|--source-unit <5|9|11|13>] [--gain-db <db>]");
@@ -1041,15 +1041,18 @@ static AudioObjectID coreaudio_find_control(AudioObjectID device_id,
 }
 
 static bool set_coreaudio_output_volume_db(double db) {
-    AudioObjectID one = find_coreaudio_one();
-    if (one == kAudioObjectUnknown) {
-        fputs("Cannot set macOS output volume: Core Audio ONE device is unavailable.\n", stderr);
+    AudioObjectID system_output = coreaudio_default_device(kAudioHardwarePropertyDefaultSystemOutputDevice);
+    if (system_output == kAudioObjectUnknown) {
+        fputs("Cannot set system output volume: macOS default system output device is unavailable.\n", stderr);
         return false;
     }
 
-    AudioObjectID control = coreaudio_find_control(one, kAudioVolumeControlClassID, kAudioObjectPropertyScopeOutput);
+    AudioObjectID control = coreaudio_find_control(system_output,
+                                                   kAudioVolumeControlClassID,
+                                                   kAudioObjectPropertyScopeOutput);
     if (control == kAudioObjectUnknown) {
-        fputs("Cannot set macOS output volume: Core Audio output volume control is unavailable.\n", stderr);
+        fputs("Cannot set system output volume: default system output has no Core Audio output volume control. "
+              "This device may expose a fixed or software-managed volume.\n", stderr);
         return false;
     }
 
@@ -1060,7 +1063,7 @@ static bool set_coreaudio_output_volume_db(double db) {
                             &range) &&
         (db < range.mMinimum || db > range.mMaximum)) {
         fprintf(stderr,
-                "macOS output volume %.2f dB is outside range %.2f..%.2f dB.\n",
+                "System output volume %.2f dB is outside the default output range %.2f..%.2f dB.\n",
                 db,
                 range.mMinimum,
                 range.mMaximum);
@@ -1072,7 +1075,7 @@ static bool set_coreaudio_output_volume_db(double db) {
                                kAudioLevelControlPropertyDecibelValue,
                                kAudioObjectPropertyScopeGlobal,
                                value)) {
-        fputs("Cannot set macOS output volume: Core Audio rejected the write.\n", stderr);
+        fputs("Cannot set system output volume: Core Audio rejected the write.\n", stderr);
         return false;
     }
 
@@ -1929,7 +1932,7 @@ static int command_output(IOUSBHostDevice *device, int argc, const char *argv[])
                 return 1;
             }
             changed = true;
-        } else if (strcmp(argv[i], "--macos-volume-db") == 0 && i + 1 < argc) {
+        } else if ((strcmp(argv[i], "--system-volume-db") == 0 || strcmp(argv[i], "--macos-volume-db") == 0) && i + 1 < argc) {
             double db = 0;
             if (!parse_double_arg(argv[++i], &db)) {
                 fprintf(stderr, "Invalid --macos-volume-db value: %s\n", argv[i]);
