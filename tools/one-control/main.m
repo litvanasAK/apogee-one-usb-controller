@@ -1935,7 +1935,7 @@ static int command_output(IOUSBHostDevice *device, int argc, const char *argv[])
         } else if ((strcmp(argv[i], "--system-volume-db") == 0 || strcmp(argv[i], "--macos-volume-db") == 0) && i + 1 < argc) {
             double db = 0;
             if (!parse_double_arg(argv[++i], &db)) {
-                fprintf(stderr, "Invalid --macos-volume-db value: %s\n", argv[i]);
+                fprintf(stderr, "Invalid system output volume value: %s\n", argv[i]);
                 return 64;
             }
             if (!set_coreaudio_output_volume_db(db)) {
