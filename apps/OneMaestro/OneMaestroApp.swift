@@ -260,7 +260,8 @@ final class DeviceModel: ObservableObject {
     }
 
     var usesCoreAudioOutputVolume: Bool {
-        coreAudioOutputControl?.values.decibels != nil
+        status?.coreAudio.defaultRoles?.systemOutput == true &&
+            coreAudioOutputControl?.values.decibels != nil
     }
 
     func refresh() async {
@@ -437,7 +438,7 @@ final class DeviceModel: ObservableObject {
 
     private func outputVolumeCommand() -> [String] {
         if usesCoreAudioOutputVolume {
-            return ["output", "--macos-volume-db", dbArgument(outputVolumeDb)]
+            return ["output", "--system-volume-db", dbArgument(outputVolumeDb)]
         }
         return ["output", "--volume-db", dbArgument(outputVolumeDb)]
     }
