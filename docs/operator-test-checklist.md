@@ -117,3 +117,23 @@ Expected results:
 - The app shows a disconnected state after unplug.
 - The app returns to ready state after reconnect.
 - Previously selected UI values remain visible from persisted app state.
+
+
+## macOS System Output Volume
+
+With the ONE selected as macOS's default system output:
+
+```sh
+.build/one-control output --system-volume-db -24
+```
+
+Expected results:
+
+- The command changes the default system output device's Core Audio volume control.
+- The app's output slider follows the Core Audio level when the ONE is the default system output.
+- If the ONE is not the default system output, the app's output slider controls the ONE's USB hardware output instead.
+- If the current default system output exposes no writable Core Audio volume control, the command fails clearly rather than changing the ONE's unrelated output level.
+
+## Physical Encoder Discovery
+
+The encoder/button event and LED-mode protocol is not implemented yet. Do not send guessed vendor requests. Capture USB interface/endpoint descriptors and a USB event trace while pressing/turning the knob, then map the report or endpoint before adding input handling.
