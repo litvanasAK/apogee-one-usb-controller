@@ -94,7 +94,9 @@ The older `bRequest=0x06` attenuation path is still available as
 `--legacy-volume-db`/`--legacy-attenuation-db`; the device accepts it, but live
 tests did not find an audible monitoring change.
 
-The app exposes monitor presets at `-63`, `-54`, `-36`, and `-18 dB`.\n\n`output --system-volume-db` targets macOS's current default system output device, not the ONE unconditionally. The app only uses this Core Audio path when the ONE is itself the default system output; otherwise its output slider continues to control the ONE's hardware output.
+The app exposes monitor presets at `-63`, `-54`, `-36`, and `-18 dB`.
+
+`output --system-volume-db` targets macOS's current default system output device, not the ONE unconditionally. The app only uses this Core Audio path when the ONE is itself the default system output; otherwise its output slider continues to control the ONE's hardware output.
 
 ## Hardware Notes
 
